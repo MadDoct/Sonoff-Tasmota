@@ -313,10 +313,6 @@ bool MCP230xx_Command(void) {
         MCP230xx_SetOutPin(pin,2);
         return serviced;
       }
-      serviced=false;
-      return serviced;
-    } else {
-      serviced=false;
     }
 #endif // USE_MCP230xx_OUTPUT	
   }
