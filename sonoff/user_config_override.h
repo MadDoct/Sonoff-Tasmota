@@ -54,7 +54,7 @@
 #ifdef STA_PASS1
 #undef STA_PASS1
 #endif
-#define STA_PASS1              "desbunda"          // [Password1] Wifi password
+#define STA_PASS1              "********"          // [Password1] Wifi password
 #ifdef STA_SSID2
 #undef STA_SSID2
 #endif
@@ -62,7 +62,7 @@
 #ifdef STA_PASS2
 #undef STA_PASS2
 #endif
-#define STA_PASS2              "iphonesucks"          // [Password1] Wifi password
+#define STA_PASS2              "*******"          // [Password1] Wifi password
 #ifdef WIFI_CONFIG_TOOL
 #undef WIFI_CONFIG_TOOL
 #endif
@@ -92,7 +92,7 @@
 #ifdef MQTT_PASS
 #undef MQTT_PASS
 #endif
-#define MQTT_PASS            "C00l57uff"            // [MqttPassword] Mandatory password
+#define MQTT_PASS            "*******"            // [MqttPassword] Mandatory password
 
 #ifdef SERIAL_LOG_LEVEL
 #undef SERIAL_LOG_LEVEL
