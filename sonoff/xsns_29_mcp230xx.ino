@@ -58,6 +58,10 @@ uint8_t mcp230xx_addresses[] = { MCP230xx_ADDRESS1, MCP230xx_ADDRESS2, MCP230xx_
 uint8_t mcp230xx_pincount = 0;
 uint8_t mcp230xx_int_en = 0;
 
+#ifdef USE_MCP230xx_OUTPUT
+uint16_t mcp230xx_tele_count = 0;
+#endif
+
 const char MCP230XX_SENSOR_RESPONSE[] PROGMEM = "{\"Sensor29-D%i\":{\"MODE\":%i,\"PULL-UP\":\"%s\",\"STATE\":\"%s\"}}";
 
 #ifdef USE_MCP230xx_OUTPUT
@@ -109,7 +113,7 @@ void MCP230xx_ApplySettings(void) {
         case 5:
           reg_iodir &= ~(1 << idx);
           if (Settings.flag.save_state) { // Firmware configuration wants us to use the last pin state
-            reg_portpins |= (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].b4 << idx);
+            reg_portpins |= (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].saved_state << idx);
           } else {
             if (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].pullup) {
               reg_portpins |= (1 << idx);
@@ -257,7 +261,7 @@ void MCP230xx_SetOutPin(uint8_t pin,uint8_t pinstate) {
   }
   I2cWrite8(mcp230xx_address, MCP230xx_GPIO + port, portpins);
   if (Settings.flag.save_state) { // Firmware configured to save last known state in settings
-    Settings.mcp230xx_config[pin].b4=portpins>>(pin-(port*8))&1;
+    Settings.mcp230xx_config[pin].saved_state=portpins>>(pin-(port*8))&1;
   }
   sprintf(cmnd,ConvertNumTxt(pinstate));
   sprintf(stt,ConvertNumTxt(portpins >> (pin-(port*8))&1));
@@ -272,7 +276,7 @@ void MCP230xx_Reset(uint8_t pinmode) {
   for (uint8_t pinx=0;pinx<16;pinx++) {
     Settings.mcp230xx_config[pinx].pinmode=pinmode;
     Settings.mcp230xx_config[pinx].pullup=pullup;
-    Settings.mcp230xx_config[pinx].b4=0;
+    Settings.mcp230xx_config[pinx].saved_state=0;
     Settings.mcp230xx_config[pinx].b5=0;
     Settings.mcp230xx_config[pinx].b6=0;
     Settings.mcp230xx_config[pinx].b7=0;
@@ -382,6 +386,34 @@ void MCP230xx_UpdateWebData(void) {
 
 #endif // USE_MCP230xx_DISPLAYOUTPUT
 
+#ifdef USE_MCP230xx_OUTPUT
+
+void MCP230xx_OutputTelemetry(void) {
+  if (mcp230xx_type == 0) return; // We do not do this if the MCP has not been detected
+  uint8_t outputcount = 0;
+  uint16_t gpiototal = 0;
+  uint8_t gpioa = 0;
+  uint8_t gpiob = 0;
+  gpioa=MCP230xx_readGPIO(0);
+  if (mcp230xx_type == 2) gpiob=MCP230xx_readGPIO(1);
+  gpiototal=((uint16_t)gpiob<<8) | gpioa;
+  for (uint8_t pinx = 0;pinx < mcp230xx_pincount;pinx++) {
+    if (Settings.mcp230xx_config[pinx].pinmode == 5) outputcount++;
+  }
+  if (outputcount) {
+    snprintf_P(mqtt_data, sizeof(mqtt_data), PSTR("{\"" D_JSON_TIME "\":\"%s\",\"MCP230_OUT\": {"), GetDateAndTime(DT_LOCAL).c_str());
+    for (uint8_t pinx = 0;pinx < mcp230xx_pincount;pinx++) {
+      if (Settings.mcp230xx_config[pinx].pinmode == 5) {
+        snprintf_P(mqtt_data,sizeof(mqtt_data), PSTR("%s\"OUTD%i\":%i,"),mqtt_data,pinx,(gpiototal>>pinx)&1);
+      }
+    }
+    snprintf_P(mqtt_data,sizeof(mqtt_data),PSTR("%s\"END\":1}}"),mqtt_data);
+    MqttPublishPrefixTopic_P(TELE, PSTR(D_RSLT_SENSOR), Settings.flag.mqtt_sensor_retain);
+  }
+}
+
+#endif
+
 
 /*********************************************************************************************\
    Interface
@@ -395,6 +427,13 @@ boolean Xsns29(byte function)
     switch (function) {
       case FUNC_EVERY_SECOND:
         MCP230xx_Detect();
+#ifdef USE_MCP230xx_OUTPUT
+        mcp230xx_tele_count++;
+        if (mcp230xx_tele_count >= Settings.tele_period) {
+          mcp230xx_tele_count=0;
+          MCP230xx_OutputTelemetry();
+        }
+#endif
         break;
       case FUNC_EVERY_50_MSECOND:
         if (mcp230xx_int_en) {          // Only check for interrupts if its enabled on one of the pins
