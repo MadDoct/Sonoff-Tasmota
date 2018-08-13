@@ -68,7 +68,12 @@ const char MCP230XX_SENSOR_RESPONSE[] PROGMEM = "{\"Sensor29-D%i\":{\"MODE\":%i,
 const char MCP230XX_CMND_RESPONSE[] PROGMEM = "{\"S29cmnd-D%i\":{\"COMMAND\":\"%s\",\"STATE\":\"%s\"}}";
 #endif // USE_MCP230xx_OUTPUT
 
-const char* ConvertNumTxt(int statu) {
+const char* ConvertNumTxt(uint8_t statu, uint8_t pinmod=0) {
+#ifdef USE_MCP230xx_OUTPUT
+if (pinmod==6) {
+  if (statu < 2) statu = abs(statu-1);
+}
+#endif // USE_MCP230xx_OUTPUT
   switch (statu) {
     case 0:
       return "OFF";
@@ -110,7 +115,7 @@ void MCP230xx_ApplySettings(void) {
           int_en=1;
           break;
 #ifdef USE_MCP230xx_OUTPUT
-        case 5:
+        case 5 ... 6:
           reg_iodir &= ~(1 << idx);
           if (Settings.flag.save_state) { // Firmware configuration wants us to use the last pin state
             reg_portpins |= (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].saved_state << idx);
@@ -125,7 +130,7 @@ void MCP230xx_ApplySettings(void) {
           break;
       }
 #ifdef USE_MCP230xx_OUTPUT
-      if (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].pullup && (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].pinmode != 5)) {
+      if (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].pullup && (Settings.mcp230xx_config[idx+(mcp230xx_port*8)].pinmode < 5)) {
         reg_gppu |= (1 << idx);
       }
 #else
@@ -255,7 +260,7 @@ void MCP230xx_SetOutPin(uint8_t pin,uint8_t pinstate) {
   if (pin > 7) port=1;
   portpins = MCP230xx_readGPIO(port);
   if (pinstate < 2) {
-    if (pinstate) portpins |= (1 << pin-(port*8)); else portpins &= ~(1 << pin-(port*8));
+      if (pinstate) portpins |= (1 << pin-(port*8)); else portpins &= ~(1 << pin-(port*8));
   } else {
     portpins ^= (1 << pin-(port*8));
   }
@@ -263,8 +268,9 @@ void MCP230xx_SetOutPin(uint8_t pin,uint8_t pinstate) {
   if (Settings.flag.save_state) { // Firmware configured to save last known state in settings
     Settings.mcp230xx_config[pin].saved_state=portpins>>(pin-(port*8))&1;
   }
-  sprintf(cmnd,ConvertNumTxt(pinstate));
-  sprintf(stt,ConvertNumTxt(portpins >> (pin-(port*8))&1));
+  uint8_t pinmo = Settings.mcp230xx_config[pin].pinmode;
+  sprintf(cmnd,ConvertNumTxt(pinstate, pinmo));
+  sprintf(stt,ConvertNumTxt((portpins >> (pin-(port*8))&1), pinmo));
   snprintf_P(mqtt_data, sizeof(mqtt_data), MCP230XX_CMND_RESPONSE, pin, cmnd, stt);
 }
 
@@ -309,20 +315,27 @@ bool MCP230xx_Command(void) {
       uint8_t port = 0;
       if (pin > 7) port = 1;
       uint8_t portdata = MCP230xx_readGPIO(port);
-      char pulluptxtr[4], pinstatustxtr[4];
+      char pulluptxtr[4],pinstatustxtr[4];
       sprintf(pulluptxtr,ConvertNumTxt(Settings.mcp230xx_config[pin].pullup));
+#ifdef USE_MCP230xx_OUTPUT
+      uint8_t pinmod = Settings.mcp230xx_config[pin].pinmode;
+      sprintf(pinstatustxtr,ConvertNumTxt(portdata>>(pin-(port*8))&1,pinmod));
+      snprintf_P(mqtt_data, sizeof(mqtt_data), MCP230XX_SENSOR_RESPONSE,pin,pinmod,pulluptxtr,pinstatustxtr);
+#else
       sprintf(pinstatustxtr,ConvertNumTxt(portdata>>(pin-(port*8))&1));
       snprintf_P(mqtt_data, sizeof(mqtt_data), MCP230XX_SENSOR_RESPONSE,pin,Settings.mcp230xx_config[pin].pinmode,pulluptxtr,pinstatustxtr);
+#endif //USE_MCP230xx_OUTPUT
       return serviced;
     }
 #ifdef USE_MCP230xx_OUTPUT
-    if (Settings.mcp230xx_config[pin].pinmode == 5) {
+    if (Settings.mcp230xx_config[pin].pinmode >= 5) {
+      uint8_t pincmd = Settings.mcp230xx_config[pin].pinmode - 5;
       if (cmnd == "ON") {
-        MCP230xx_SetOutPin(pin,1);
+        MCP230xx_SetOutPin(pin,abs(pincmd-1));
         return serviced;
       }
       if (cmnd == "OFF") {
-        MCP230xx_SetOutPin(pin,0);
+        MCP230xx_SetOutPin(pin,pincmd);
         return serviced;
       }
       if (cmnd == "T")   {
@@ -338,7 +351,7 @@ bool MCP230xx_Command(void) {
       pinmode = data.substring(_a+1, _b).toInt();
       pullup = data.substring(_b+1, XdrvMailbox.data_len).toInt();
 #ifdef USE_MCP230xx_OUTPUT
-      if ((pin < mcp230xx_pincount) && (pinmode < 6) && (pullup < 2)) {
+      if ((pin < mcp230xx_pincount) && (pinmode < 7) && (pullup < 2)) {
 #else  // not USE_MCP230xx_OUTPUT
       if ((pin < mcp230xx_pincount) && (pinmode < 5) && (pullup < 2)) {
 #endif // USE_MCP230xx_OUTPUT
@@ -350,7 +363,11 @@ bool MCP230xx_Command(void) {
         uint8_t portdata = MCP230xx_readGPIO(port);
         char pulluptxtc[4], pinstatustxtc[4];
         sprintf(pulluptxtc,ConvertNumTxt(pullup));
+#ifdef USE_MCP230xx_OUTPUT
+        sprintf(pinstatustxtc,ConvertNumTxt(portdata>>(pin-(port*8))&1,Settings.mcp230xx_config[pin].pinmode));
+#else  // not USE_MCP230xx_OUTPUT
         sprintf(pinstatustxtc,ConvertNumTxt(portdata>>(pin-(port*8))&1));
+#endif // USE_MCP230xx_OUTPUT
         snprintf_P(mqtt_data, sizeof(mqtt_data), MCP230XX_SENSOR_RESPONSE,pin,pinmode,pulluptxtc,pinstatustxtc);
       } else {
         serviced = false;
@@ -376,9 +393,9 @@ void MCP230xx_UpdateWebData(void) {
   }
   uint16_t gpio = (gpio2 << 8) + gpio1;
   for (uint8_t pin = 0; pin < mcp230xx_pincount; pin++) {
-    if (Settings.mcp230xx_config[pin].pinmode == 5) {
+    if (Settings.mcp230xx_config[pin].pinmode >= 5) {
       char stt[4];
-      sprintf(stt,ConvertNumTxt((gpio>>pin)&1));
+      sprintf(stt,ConvertNumTxt((gpio>>pin)&1,Settings.mcp230xx_config[pin].pinmode));
       snprintf_P(mqtt_data, sizeof(mqtt_data), HTTP_SNS_MCP230xx_OUTPUT, mqtt_data, pin, stt);
     }
   }
@@ -398,13 +415,15 @@ void MCP230xx_OutputTelemetry(void) {
   if (mcp230xx_type == 2) gpiob=MCP230xx_readGPIO(1);
   gpiototal=((uint16_t)gpiob<<8) | gpioa;
   for (uint8_t pinx = 0;pinx < mcp230xx_pincount;pinx++) {
-    if (Settings.mcp230xx_config[pinx].pinmode == 5) outputcount++;
+    if (Settings.mcp230xx_config[pinx].pinmode >= 5) outputcount++;
   }
   if (outputcount) {
+    char stt[4];
     snprintf_P(mqtt_data, sizeof(mqtt_data), PSTR("{\"" D_JSON_TIME "\":\"%s\",\"MCP230_OUT\": {"), GetDateAndTime(DT_LOCAL).c_str());
     for (uint8_t pinx = 0;pinx < mcp230xx_pincount;pinx++) {
-      if (Settings.mcp230xx_config[pinx].pinmode == 5) {
-        snprintf_P(mqtt_data,sizeof(mqtt_data), PSTR("%s\"OUTD%i\":%i,"),mqtt_data,pinx,(gpiototal>>pinx)&1);
+      if (Settings.mcp230xx_config[pinx].pinmode >= 5) {
+        sprintf(stt,ConvertNumTxt(((gpiototal>>pinx)&1),Settings.mcp230xx_config[pinx].pinmode));
+        snprintf_P(mqtt_data,sizeof(mqtt_data), PSTR("%s\"OUTD%i\":%s,"),mqtt_data,pinx,stt);
       }
     }
     snprintf_P(mqtt_data,sizeof(mqtt_data),PSTR("%s\"END\":1}}"),mqtt_data);
@@ -417,7 +436,7 @@ void MCP230xx_OutputTelemetry(void) {
 
 /*********************************************************************************************\
    Interface
-  \*********************************************************************************************/
+\*********************************************************************************************/
 
 boolean Xsns29(byte function)
 {
